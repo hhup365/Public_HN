@@ -1,22 +1,33 @@
-name: HN Host Auto Task (Callable)
+name: HN Host Auto Task
 
 on:
-  workflow_call:                  # 只允许被调用，不单独触发
-    inputs:
-      caller_repo:
-        required: true
-        type: string
+  workflow_dispatch:
+  schedule:
+    - cron: '20 2 * * *'
+
+permissions:
+  contents: write
 
 jobs:
   run-automation:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+
     steps:
-      - name: Check out private code
+      - name: Checkout public repo
+        uses: actions/checkout@v4
+
+      - name: Checkout private code
         uses: actions/checkout@v4
         with:
           repository: hhup365/Test-Hn-host
-          token: ${{ secrets.GH_PAT }}   # ← 用的是公开库自己的 GH_PAT，对方无需提供
+          token: ${{ secrets.GH_PAT }}
+          path: private_repo
+
+      - name: Merge private code into workspace
+        run: |
+          rsync -a --exclude='.git' private_repo/ ./
+          rm -rf private_repo
 
       - name: Setting up Node.js
         uses: actions/setup-node@v4
@@ -36,17 +47,15 @@ jobs:
       - name: Run Automated Inspection
         env:
           SECRETS_JSON: ${{ toJSON(secrets) }}
-          GITHUB_REPO: ${{ inputs.caller_repo }}
+          GITHUB_REPO: ${{ github.repository }}
         run: npm start
 
-      - name: Write time.txt to caller repo
+      - name: Record the last run time
         if: always()
         run: |
-          git clone https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ inputs.caller_repo }}.git caller-repo
-          cd caller-repo
           echo "Last execution time (UTC): $(date -u +'%Y-%m-%d %H:%M:%S')" > time.txt
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add time.txt
           git commit -m "📝 Update Runtime Records [skip ci]" || echo "No changes; no submission required."
           git push
