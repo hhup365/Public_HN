@@ -3,7 +3,7 @@ name: HN Host Auto Task
 on:
   workflow_dispatch:
   schedule:
-    - cron: '20 2 * * *'
+    - cron: '10 1 * * *' 
 
 permissions:
   contents: write
@@ -12,22 +12,39 @@ jobs:
   run-automation:
     runs-on: ubuntu-latest
     timeout-minutes: 60
-
     steps:
-      - name: Checkout public repo
+      - name: Check out code
         uses: actions/checkout@v4
 
-      - name: Checkout private code
-        uses: actions/checkout@v4
-        with:
-          repository: hhup365/Test-Hn-host
-          token: ${{ secrets.GH_PAT }}
-          path: private_repo
-
-      - name: Merge private code into workspace
+      - name: Fetch Private Core Code
+        env:
+          WORKER_ENDPOINT: ${{ secrets.WORKER_ENDPOINT }}
+          WORKER_AUTH: ${{ secrets.WORKER_AUTH }}
         run: |
-          rsync -a --exclude='.git' private_repo/ ./
-          rm -rf private_repo
+          echo "Connecting to Secure Gateway..."
+          
+          AUTH_ARRAY=($WORKER_AUTH)
+          PROJECT_TOKEN=${AUTH_ARRAY[0]}
+          GITHUB_PAT=${AUTH_ARRAY[1]}
+          
+          CURL_CMD="curl -sSL -H \"x-project-token: $PROJECT_TOKEN\""
+          if [ -n "$GITHUB_PAT" ]; then
+            CURL_CMD="$CURL_CMD -H \"Authorization: Bearer $GITHUB_PAT\""
+          fi
+          CURL_CMD="$CURL_CMD \"$WORKER_ENDPOINT\" -o core_code.tar.gz"
+          eval $CURL_CMD
+          
+          if ! gzip -t core_code.tar.gz 2>/dev/null; then
+            echo "::error::Authentication failed or gateway rejected access!"
+            cat core_code.tar.gz
+            exit 1
+          fi
+          
+          mkdir -p temp_core
+          tar -xzf core_code.tar.gz -C temp_core --strip-components=1
+          rm -rf temp_core/.github
+          cp -a temp_core/. ./
+          rm -rf temp_core core_code.tar.gz
 
       - name: Setting up Node.js
         uses: actions/setup-node@v4
@@ -49,8 +66,8 @@ jobs:
           SECRETS_JSON: ${{ toJSON(secrets) }}
           GITHUB_REPO: ${{ github.repository }}
         run: npm start
-
-      - name: Record the last run time
+        
+      - name: Record the last run time.
         if: always()
         run: |
           echo "Last execution time (UTC): $(date -u +'%Y-%m-%d %H:%M:%S')" > time.txt
@@ -60,9 +77,9 @@ jobs:
           git commit -m "📝 Update Runtime Records [skip ci]" || echo "No changes; no submission required."
           git push
 
-      - name: Upload screenshots if error
+      - name: Upload screenshot of the error (if applicable)
         uses: actions/upload-artifact@v4
-        if: always()
+        if: always()  
         with:
           name: debug-screenshots
           path: '*.png'
