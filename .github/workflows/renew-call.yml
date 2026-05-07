@@ -1,14 +1,11 @@
 name: HN Host Auto Task (Callable)
 
 on:
-  workflow_call:
+  workflow_call:                  # 只允许被调用，不单独触发
     inputs:
       caller_repo:
         required: true
         type: string
-    secrets:
-      GH_PAT:
-        required: true
 
 jobs:
   run-automation:
@@ -19,7 +16,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: hhup365/Test-Hn-host
-          token: ${{ secrets.GH_PAT }}
+          token: ${{ secrets.GH_PAT }}   # ← 用的是公开库自己的 GH_PAT，对方无需提供
 
       - name: Setting up Node.js
         uses: actions/setup-node@v4
