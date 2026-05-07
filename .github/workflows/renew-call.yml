@@ -1,0 +1,63 @@
+name: HN Host Auto Task (Callable)
+
+on:
+  workflow_call:
+    inputs:
+      caller_repo:
+        required: true
+        type: string
+    secrets:
+      GH_PAT:
+        required: true
+
+jobs:
+  run-automation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out private code
+        uses: actions/checkout@v4
+        with:
+          repository: hhup365/Test-Hn-host
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Setting up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install project dependencies
+        run: npm install
+
+      - name: Configure Proxy
+        run: |
+          curl -L -o sing-box.tar.gz https://github.com/SagerNet/sing-box/releases/download/v1.13.11/sing-box-1.13.11-linux-amd64.tar.gz
+          tar -xzf sing-box.tar.gz
+          sudo cp sing-box-1.13.11-linux-amd64/sing-box /usr/local/bin/
+          sudo chmod +x /usr/local/bin/sing-box
+
+      - name: Run Automated Inspection
+        env:
+          SECRETS_JSON: ${{ toJSON(secrets) }}
+          GITHUB_REPO: ${{ inputs.caller_repo }}
+        run: npm start
+
+      - name: Write time.txt to caller repo
+        if: always()
+        run: |
+          git clone https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ inputs.caller_repo }}.git caller-repo
+          cd caller-repo
+          echo "Last execution time (UTC): $(date -u +'%Y-%m-%d %H:%M:%S')" > time.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add time.txt
+          git commit -m "📝 Update Runtime Records [skip ci]" || echo "No changes; no submission required."
+          git push
+
+      - name: Upload screenshots if error
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: debug-screenshots
+          path: '*.png'
+          retention-days: 5
