@@ -1,20 +1,16 @@
 name: 🎮 Free-ze-Host Auto
-
 on:
   schedule:
     - cron: '20 3 * * *'
   workflow_dispatch:
-
 permissions:
   contents: write
   actions: write
-
 jobs:
   renew:
     name: Renew Check and Execution
     runs-on: ubuntu-latest
     timeout-minutes: 40
-
     steps:
       - name: Checkout Public Repository
         uses: actions/checkout@v4
@@ -45,34 +41,31 @@ jobs:
             const path = 'FZ/state.json';
             const env = process.env;
             let state = {};
-
             if (fs.existsSync(path)) {
-              try { state = JSON.parse(fs.readFileSync(path, 'utf8')); } catch(e){}
+              try { state = JSON.parse(fs.readFileSync(path, 'utf8')); } catch(e) { state = {}; }
             }
-
+            if (!fs.existsSync(path)) {
+              fs.writeFileSync(path, JSON.stringify(state, null, 2));
+            }
             const now = Date.now();
-            const threshold = 3*24*60*60*1000;
+            const threshold = 3 * 24 * 60 * 60 * 1000;
             const runList = [];
-
             for (const key in env) {
               if (key.startsWith('FZ_ACCOUNTS_')) {
                 const suffix = key.replace('FZ_ACCOUNTS_', '');
                 const s = state[suffix];
-
                 if (!s || !s.servers || Object.keys(s.servers).length === 0) {
                   runList.push(suffix);
                   continue;
                 }
-
                 if (Object.values(s.servers).some(exp => exp - now < threshold)) {
                   runList.push(suffix);
                 }
               }
             }
-
             const runNeeded = runList.length > 0 ? 'true' : 'false';
-            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'run_needed=' + runNeeded + '\\n');
-            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'run_list=' + runList.join(',') + '\\n');
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'run_needed=' + runNeeded + '\n');
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'run_list=' + runList.join(',') + '\n');
           "
 
       - name: Install Dependencies
@@ -108,10 +101,10 @@ jobs:
           retention-days: 3
 
       - name: Commit FZ/state.json
-        if: steps.check.outputs.run_needed == 'true' || always()
+        if: always()
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add FZ/state.json || true
-          git commit -m "chore: update FZ/state.json" || echo "No state changes"
-          git push
+          git diff --cached --quiet && echo "No state changes, skip commit." || \
+            (git commit -m "chore: update FZ/state.json" && git push)
