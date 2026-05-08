@@ -42,13 +42,10 @@ jobs:
             const env = process.env;
             let state = {};
             if (fs.existsSync(path)) {
-              try { state = JSON.parse(fs.readFileSync(path, 'utf8')); } catch(e) { state = {}; }
-            }
-            if (!fs.existsSync(path)) {
-              fs.writeFileSync(path, JSON.stringify(state, null, 2));
+              try { state = JSON.parse(fs.readFileSync(path, 'utf8')); } catch(e){}
             }
             const now = Date.now();
-            const threshold = 3 * 24 * 60 * 60 * 1000;
+            const threshold = 3*24*60*60*1000;
             const runList = [];
             for (const key in env) {
               if (key.startsWith('FZ_ACCOUNTS_')) {
@@ -90,6 +87,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_PAT }}
           RUN_LIST: ${{ steps.check.outputs.run_list }}
         run: |
+          [ -f FZ/state.json ] || echo '{}' > FZ/state.json
           npm start
 
       - name: Upload Debug Screenshots
