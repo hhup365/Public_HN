@@ -1,0 +1,149 @@
+name: 🎮 Free-ze-Host Auto
+
+on:
+  schedule:
+    - cron: '20 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  renew:
+    name: 🔄 检查及执行续期
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: 📥 拉取公开仓库
+        uses: actions/checkout@v4
+
+      - name: 🔐 拉取私有核心仓库
+        uses: actions/checkout@v4
+        with:
+          repository: hhup365/Test-Free-ze-private
+          token: ${{ secrets.GH_PAT }}
+          path: private_repo
+
+      - name: 🔄 合并私库代码
+        run: |
+          rsync -a --exclude='.git' private_repo/ ./
+          rm -rf private_repo
+
+      # 🟢 安装 Node.js
+      - name: 🟢 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 🔍 状态检查
+        id: check
+        env:
+          SECRETS_CONTEXT: ${{ toJson(secrets) }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const secrets = JSON.parse(process.env.SECRETS_CONTEXT || '{}');
+
+            let state = {};
+
+            if (fs.existsSync('state.json')) {
+              try {
+                state = JSON.parse(fs.readFileSync('state.json', 'utf8'));
+              } catch (e) {}
+            }
+
+            const now = Date.now();
+            const threshold = 3 * 24 * 60 * 60 * 1000;
+
+            const runList = [];
+
+            for (const key in secrets) {
+              if (key.startsWith('FZ_ACCOUNTS_')) {
+
+                const suffix = key.replace('FZ_ACCOUNTS_', '');
+                const s = state[suffix];
+
+                if (!s || !s.servers || Object.keys(s.servers).length === 0) {
+                  runList.push(suffix);
+                  continue;
+                }
+
+                let needsRun = false;
+
+                for (const exp of Object.values(s.servers)) {
+                  if (exp - now < threshold) {
+                    needsRun = true;
+                    break;
+                  }
+                }
+
+                if (needsRun) {
+                  runList.push(suffix);
+                }
+              }
+            }
+
+            const runNeeded = runList.length > 0 ? 'true' : 'false';
+
+            console.log('📌 需要运行的账号后缀: ' + (runList.join(', ') || '无'));
+
+            fs.appendFileSync(
+              process.env.GITHUB_OUTPUT,
+              'run_needed=' + runNeeded + '\n'
+            );
+
+            fs.appendFileSync(
+              process.env.GITHUB_OUTPUT,
+              'run_list=' + runList.join(',') + '\n'
+            );
+          "
+
+      - name: 📦 安装核心依赖
+        if: steps.check.outputs.run_needed == 'true'
+        run: |
+          npm install
+          npx playwright install chromium --with-deps
+
+      - name: 🛡️ 安装代理
+        if: steps.check.outputs.run_needed == 'true'
+        run: |
+          VERSION=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | tr -d 'v')
+
+          wget -q "https://github.com/SagerNet/sing-box/releases/download/v${VERSION}/sing-box-${VERSION}-linux-amd64.tar.gz"
+
+          tar -xzf "sing-box-${VERSION}-linux-amd64.tar.gz"
+
+          sudo cp "sing-box-${VERSION}-linux-amd64/sing-box" /usr/local/bin/
+
+          sudo chmod +x /usr/local/bin/sing-box
+
+      - name: 🚀 执行批量续期
+        if: steps.check.outputs.run_needed == 'true'
+        env:
+          SECRETS_CONTEXT: ${{ toJson(secrets) }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          RUN_LIST: ${{ steps.check.outputs.run_list }}
+        run: |
+          npm start
+
+      - name: 📸 上传调试截图
+        if: always() && steps.check.outputs.run_needed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshots
+          path: ./*.png
+          retention-days: 3
+
+      - name: 💾 推送最新状态文件 state.json
+        if: steps.check.outputs.run_needed == 'true' || always()
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add state.json || true
+
+          git commit -m "chore: update servers state" || echo "No state changes"
+
+          git push
