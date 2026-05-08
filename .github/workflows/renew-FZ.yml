@@ -22,7 +22,7 @@ jobs:
       - name: Checkout Private Repository
         uses: actions/checkout@v4
         with:
-          repository: hhup365/Test-Free-ze-private
+          repository: hhup365/Test-Free-ze
           token: ${{ secrets.GH_PAT }}
           path: private_repo
 
