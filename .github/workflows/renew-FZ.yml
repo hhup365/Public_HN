@@ -1,4 +1,38 @@
-- name: Check State
+name: 🎮 Free-ze-Host Auto
+on:
+  schedule:
+    - cron: '20 3 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+jobs:
+  renew:
+    name: Renew Check and Execution
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout Public Repository
+        uses: actions/checkout@v4
+
+      - name: Checkout Private Repository
+        uses: actions/checkout@v4
+        with:
+          repository: hhup365/Test-Free-ze
+          token: ${{ secrets.GH_PAT }}
+          path: private_repo
+
+      - name: Merge Private Repository
+        run: |
+          rsync -a --exclude='.git' private_repo/ ./
+          rm -rf private_repo
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check State
         id: check
         env:
           SECRETS_CONTEXT: ${{ toJson(secrets) }}
@@ -33,3 +67,45 @@
             fs.appendFileSync(process.env.GITHUB_OUTPUT, 'run_needed=' + runNeeded + '\n');
             fs.appendFileSync(process.env.GITHUB_OUTPUT, 'run_list=' + runList.join(',') + '\n');
           "
+
+      - name: Install Dependencies
+        if: steps.check.outputs.run_needed == 'true'
+        run: |
+          npm install
+          npx playwright install chromium --with-deps
+
+      - name: Install Sing-Box
+        if: steps.check.outputs.run_needed == 'true'
+        run: |
+          VERSION=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | tr -d 'v')
+          wget -q "https://github.com/SagerNet/sing-box/releases/download/v${VERSION}/sing-box-${VERSION}-linux-amd64.tar.gz"
+          tar -xzf "sing-box-${VERSION}-linux-amd64.tar.gz"
+          sudo cp "sing-box-${VERSION}-linux-amd64/sing-box" /usr/local/bin/
+          sudo chmod +x /usr/local/bin/sing-box
+
+      - name: Run Renewal
+        if: steps.check.outputs.run_needed == 'true'
+        env:
+          SECRETS_CONTEXT: ${{ toJson(secrets) }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          RUN_LIST: ${{ steps.check.outputs.run_list }}
+        run: |
+          [ -f FZ/state.json ] || echo '{}' > FZ/state.json
+          npm start
+
+      - name: Upload Debug Screenshots
+        if: always() && steps.check.outputs.run_needed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshots
+          path: ./*.png
+          retention-days: 3
+
+      - name: Commit FZ/state.json
+        if: always()
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add FZ/state.json || true
+          git diff --cached --quiet && echo "No state changes, skip commit." || \
+            (git commit -m "chore: update FZ/state.json" && git push)
