@@ -84,7 +84,7 @@ jobs:
           if [ -z "$VERSION" ]; then
             VERSION="1.11.6"
           fi
-          echo "📦 sing-box 版本: $VERSION"
+          echo "📦 sing-box : $VERSION"
           wget -q "https://github.com/SagerNet/sing-box/releases/download/v${VERSION}/sing-box-${VERSION}-linux-amd64.tar.gz"
           tar -xzf "sing-box-${VERSION}-linux-amd64.tar.gz"
           sudo cp "sing-box-${VERSION}-linux-amd64/sing-box" /usr/local/bin/
@@ -98,7 +98,9 @@ jobs:
           RUN_LIST: ${{ steps.check.outputs.run_list }}
         run: |
           [ -f FZ/state.json ] || echo '{}' > FZ/state.json
+          cp FZ/state.json state.json
           npm start
+          cp state.json FZ/state.json
 
       - name: Upload Debug Screenshots
         if: always() && steps.check.outputs.run_needed == 'true'
