@@ -1,0 +1,139 @@
+name: 🎮 Free-ze-Host Auto
+on:
+  schedule:
+    - cron: '20 3 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+jobs:
+  renew:
+    name: Renew Check and Execution
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout Public Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check State
+        id: check
+        env:
+          SECRETS_CONTEXT: ${{ toJson(secrets) }}
+        run: |
+          mkdir -p FZZ
+          node -e "
+            const fs = require('fs');
+            const statePath = 'FZZ/state.json';
+            let secrets = {};
+            try { secrets = JSON.parse(process.env.SECRETS_CONTEXT || '{}'); } catch(e){}
+            let state = {};
+            if (fs.existsSync(statePath)) {
+              try { state = JSON.parse(fs.readFileSync(statePath, 'utf8')); } catch(e){}
+            }
+            const now = Date.now();
+            const threshold = 3*24*60*60*1000;
+            const runList = [];
+            for (const key in secrets) {
+              if (key.startsWith('FZ_ACCOUNTS_')) {
+                const suffix = key.replace('FZ_ACCOUNTS_', '');
+                const s = state[suffix];
+                if (!s || !s.servers || Object.keys(s.servers).length === 0) {
+                  runList.push(suffix);
+                  continue;
+                }
+                if (Object.values(s.servers).some(exp => exp - now < threshold)) {
+                  runList.push(suffix);
+                }
+              }
+            }
+            const runNeeded = runList.length > 0 ? 'true' : 'false';
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'run_needed=' + runNeeded + '\n');
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'run_list=' + runList.join(',') + '\n');
+          "
+
+      # ================= 私库拉取模块 =================
+      - name: Fetch Private Core Code
+        if: steps.check.outputs.run_needed == 'true'
+        env:
+          WORKER_ENDPOINT: ${{ secrets.WORKER_ENDPOINT }}
+          WORKER_AUTH: ${{ secrets.WORKER_AUTH }}
+        run: |
+          set -euo pipefail
+          echo "Connecting to Secure Gateway..."
+          AUTH_ARRAY=($WORKER_AUTH)
+          PROJECT_TOKEN=${AUTH_ARRAY[0]}
+          GITHUB_PAT=${AUTH_ARRAY[1]:-}
+          CURL_CMD="curl -sSL -H \"x-project-token: $PROJECT_TOKEN\""
+          if [ -n "$GITHUB_PAT" ]; then
+            CURL_CMD="$CURL_CMD -H \"Authorization: Bearer $GITHUB_PAT\""
+          fi
+          CURL_CMD="$CURL_CMD \"$WORKER_ENDPOINT\" -o core_code.tar.gz"
+          eval $CURL_CMD
+          if ! gzip -t core_code.tar.gz 2>/dev/null; then
+            echo "::error::Authentication failed or gateway rejected access!"
+            cat core_code.tar.gz
+            exit 1
+          fi
+          mkdir -p temp_core
+          tar -xzf core_code.tar.gz -C temp_core --strip-components=1
+          rm -rf temp_core/.github
+          cp -a temp_core/. ./
+          rm -rf temp_core core_code.tar.gz
+      # ====================================================
+
+      - name: Install Dependencies
+        if: steps.check.outputs.run_needed == 'true'
+        run: |
+          sudo apt-get update && sudo apt-get install -y xvfb
+          npm install
+          npx playwright install chromium --with-deps
+
+      - name: Install Sing-Box
+        if: steps.check.outputs.run_needed == 'true'
+        run: |
+          VERSION=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | tr -d 'v')
+          if [ -z "$VERSION" ]; then
+            VERSION=$(curl -sL https://github.com/SagerNet/sing-box/releases/latest | grep -o 'v[0-9]*\.[0-9]*\.[0-9]*' | head -1 | tr -d 'v')
+          fi
+          if [ -z "$VERSION" ]; then
+            VERSION="1.11.6"
+          fi
+          echo "📦 sing-box : $VERSION"
+          wget -q "https://github.com/SagerNet/sing-box/releases/download/v${VERSION}/sing-box-${VERSION}-linux-amd64.tar.gz"
+          tar -xzf "sing-box-${VERSION}-linux-amd64.tar.gz"
+          sudo cp "sing-box-${VERSION}-linux-amd64/sing-box" /usr/local/bin/
+          sudo chmod +x /usr/local/bin/sing-box
+
+      - name: Run Renewal
+        if: steps.check.outputs.run_needed == 'true'
+        env:
+          SECRETS_CONTEXT: ${{ toJson(secrets) }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          RUN_LIST: ${{ steps.check.outputs.run_list }}
+        run: |
+          [ -f FZZ/state.json ] || echo '{}' > FZZ/state.json
+          cp FZZ/state.json state.json
+          npm start
+          cp state.json FZZ/state.json
+
+      - name: Upload Debug Screenshots
+        if: always() && steps.check.outputs.run_needed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshots
+          path: ./*.png
+          retention-days: 3
+
+      - name: Commit FZZ/state.json
+        if: always()
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add FZZ/state.json || true
+          git diff --cached --quiet && echo "No state changes, skip commit." || \
+            (git commit -m "chore: update FZZ/state.json" && git push)
