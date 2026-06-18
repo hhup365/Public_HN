@@ -1,4 +1,4 @@
-name: 🎮 Free-ze-Host Auto
+name: 🎮 Free-ze-Host Call Auto
 on:
   schedule:
     - cron: '35 2 * * *'
